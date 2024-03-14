@@ -1,108 +1,80 @@
-#!/bin/bash
-# Generate OUI list for libmackerel
-VER="1.4"
+#!/bin/sh
 
-# File to download
-DLFILE="http://linuxnet.ca/ieee/oui.txt.gz"
+CURL=`which curl 2>/dev/null`
+WGET=`which wget 2>/dev/null`
+OUI_DOWNLOAD_URL="http://standards.ieee.org/develop/regauth/oui/oui.txt"
 
-# Location of tmp file
-TMPDIR="/tmp"
-TMPFILE="/tmp/out.tmp"
+OUI_PATH="/usr/local/etc/aircrack-ng"
+AIRODUMP_NG_OUI="${OUI_PATH}/airodump-ng-oui.txt"
+OUI_IEEE="${OUI_PATH}/oui.txt"
+USERID=""
 
-# File to write
-OUIFILE="oui.txt"
-#------------------------------------------------------------------------------#
-ErrorMsg ()
-{
-[[ $(expr substr "$2" 1 1) == "n" ]] && echo
-if [ "$1" == "ERR" ]; then
-	echo "  ERROR: ${2#n}"
-	exit 1
-elif [ "$1" == "WRN" ]; then
-	echo "  WARNING: ${2#n}"
+
+# Make sure the user is root
+if [ x"`which id 2> /dev/null`" != "x" ]
+then
+	USERID="`id -u 2> /dev/null`"
 fi
-exit 1
-}
 
-get_oui ()
-{
-echo -n "Downloading OUI file from $DLFILE..."
-wget --quiet -P $TMPDIR $DLFILE || \
-	ErrorMsg ERR "Unable to contact server!"
+if [ x$USERID = "x" -a x$UID != "x" ]
+then
+	USERID=$UID
+fi
 
-echo "OK"
-}
+if [ x$USERID != "x" -a x$USERID != "x0" ]
+then
+	echo Run it as root ; exit ;
+fi
 
-expand_file ()
-{
-	echo -n "Decompressing..."
-	gunzip $TMPDIR/oui.txt.gz
-	cp $TMPDIR/oui.txt $TMPFILE
-	echo "OK"
-}
 
-format_file ()
-{
-echo -n "Reformatting..."
-# Isolate MAC and manufacturer
-grep "(hex)" $TMPFILE | awk '{print $1","$3,$4,$5,$6,$7,$8}' | \
-	sed 's/ *$//; /^$/d' > $OUIFILE || \
-	ErrorMsg ERR "Unable to reformat file! Is awk/sed installed?"
+if [ ! -d "${OUI_PATH}" ]; then
+	mkdir -p ${OUI_PATH}
+fi
 
-# Use colon in MAC addresses
-sed -i 's/-/:/g' $OUIFILE || \
-	ErrorMsg ERR "Unable to format MACs!"
+if [ ${CURL} ] || [ ${WGET} ]; then
+	# Delete previous partially downloaded file (if the script was aborted)
+	rm -f ${OUI_IEEE} >/dev/null 2>/dev/null
 
-# Remove commas from manufacturer names
-sed -i 's/,//g2' $OUIFILE || \
-	ErrorMsg ERR "Unable to format manufacturers!"
+	# Download it
+	echo "[*] Downloading IEEE OUI file..."
 
-echo "OK"
-}
-
-clean_all ()
-{
-echo -n "Removing files..."
-rm -f $TMPFILE
-rm -f $OUIFILE
-echo "OK"
-}
-
-# Execution Start
-case $1 in
-'force')
-	clean_all
-	get_oui
-	expand_file
-	format_file
-;;
-'clean')
-	clean_all
-;;
-'check')
-	# If file doesn't exist
-	if [ ! -f $OUIFILE ];
-	then
-		get_oui
-		expand_file
-		format_file
-		echo "Done."
-		exit 0
+	if [ ${WGET} ]; then
+		${WGET} ${OUI_DOWNLOAD_URL} -O ${OUI_IEEE} >/dev/null 2>/dev/null
+	else
+		${CURL} -L ${OUI_DOWNLOAD_URL} > ${OUI_IEEE} 2>/dev/null
+	fi
+	
+	if [ "${?}" -ne 0 ]; then
+		echo "[*] Error: Failed to download OUI list, aborting..."
+		exit 1
 	fi
 
-	# If we get here, it does
-	echo "OUI file exists, skipping."
-;;
-*)
-	echo "gen_oui.sh Version: $VER"
-	echo "usage: $0 check|force|clean"
-	echo
-	echo "This script will download a copy of the OUI database from"
-	echo "the IEEE and format it for libmackerel."
-	echo
-	echo "The available arguments as of version $VER are as follows:"
-	echo "check      - Check for and create OUI file"
-	echo "force      - Force an update of OUI file"
-	echo "clean      - Remove all created files"
-esac
-#EOF
+	# Parse the downloaded OUI list
+	echo "[*] Parsing OUI file..."
+		
+	# Keep the previous file
+	if [ -f "${OUI_DOWNLOADED}" ]; then
+		mv ${AIRODUMP_NG_OUI} ${OUI}-old
+	fi
+
+	# Parse it
+	grep "(hex)" ${OUI_IEEE} > ${AIRODUMP_NG_OUI}
+	if [ "${?}" -ne 0 ]; then
+		echo "[*] Error: Failed to parse OUI, aborting..."
+		exit 1
+	fi
+
+	# Cleanup
+	rm -f ${OUI_IEEE}
+		
+	echo "[*] Airodump-ng OUI file successfully updated"
+else
+	if [ -f "${OUI}" ]; then
+		echo "[*] Please install curl or wget to update OUI list"
+	else 
+		echo "[*] Please install curl or wget to install OUI list"
+	fi
+	exit 1
+fi
+
+exit 0
